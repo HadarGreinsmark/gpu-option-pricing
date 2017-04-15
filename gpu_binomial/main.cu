@@ -88,7 +88,7 @@ int main() {
     check_err(cudaEventRecord(end, 0));
     check_err(cudaEventSynchronize(end));
 
-    double duration;
+    float duration;
     check_err(cudaEventElapsedTime(&duration, start, end));
     check_err(cudaEventDestroy(start));
     check_err(cudaEventDestroy(end));
