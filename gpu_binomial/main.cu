@@ -5,7 +5,7 @@
 
 using namespace std;
 
-#define cu_err_check(cu_err) { cu_err_handler(cu_err, __FILE__, __LINE__); }
+#define check_err(cu_err) { cu_err_handler(cu_err, __FILE__, __LINE__); }
 
 inline void cu_err_handler(cudaError_t err, const char* file, int line) {
 	if (err != cudaSuccess) {
@@ -56,21 +56,44 @@ double binomial_american_put(double stock_price,
         host_tree[step] = max(exercise, .0);
     }
 
-    cu_err_check(cudaMalloc((void**) &dev_tree, (num_steps+1) * sizeof(double)));
-    cu_err_check(cudaMemcpy(dev_tree, host_tree, (num_steps+1) * sizeof(double), cudaMemcpyHostToDevice));
+    check_err(cudaMalloc((void**) &dev_tree, (num_steps+1) * sizeof(double)));
+    check_err(cudaMemcpy(dev_tree, host_tree, (num_steps+1) * sizeof(double), cudaMemcpyHostToDevice));
 
     tree_reduction<<<1, num_steps>>>(dev_tree, stock_price, strike_price, num_steps, R, up_factor, up_prob);
 
 
     double price;
-    cu_err_check(cudaMemcpy(&price, &dev_tree[0], sizeof(double), cudaMemcpyDeviceToHost));
+    check_err(cudaMemcpy(&price, &dev_tree[0], sizeof(double), cudaMemcpyDeviceToHost));
 
     cudaFree(dev_tree);
     delete[] host_tree;
     return price;
 }
 int main() {
-    cout << binomial_american_put(20, 25, .5, 1, 20, 0.06) << endl;
+	cudaEvent_t start, end;
+	check_err(cudaEventCreate(&start));
+	check_err(cudaEventCreate(&end));
+
+    // Warmup
+    for (int i = 0; i < 100; ++i) {
+        binomial_american_put(20, 25, .5, 1, 200, 0.06);
+    }
+
+    check_err(cudaEventRecord(start, 0));
+
+    for (int i = 0; i < 1000; ++i) {
+        binomial_american_put(20, 25, .5, 1, 200, 0.06);
+    }
+
+    check_err(cudaEventRecord(end, 0));
+    check_err(cudaEventSynchronize(end));
+
+    double duration;
+    check_err(cudaEventElapsedTime(&duration, start, end));
+    check_err(cudaEventDestroy(start));
+    check_err(cudaEventDestroy(end));
+
+    printf("Time: %d ms\n", duration);
 
     return 0;
 }
