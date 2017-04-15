@@ -7,7 +7,7 @@ using namespace std;
 
 #define cu_err_check(cu_err) { cu_err_handler(cu_err, __FILE__, __LINE__); }
 
-inline void cu_err_handler(cudaError_t err, char* file, int line) {
+inline void cu_err_handler(cudaError_t err, const char* file, int line) {
 	if (err != cudaSuccess) {
 		fprintf(stderr, "GPU error: '%s' at %s:%d", cudaGetErrorString(err), file, line);
 		exit(1);
@@ -40,12 +40,11 @@ double binomial_american_put(double stock_price,
                              double expire,
                              double volat,
                              int num_steps,
-                             double risk_free_rate,
-                             double dividend_yield) {
+                             double risk_free_rate) {
     double dt = expire / num_steps;
     double up_factor = exp(volat * sqrt(dt));
     double down_factor = 1 / up_factor;
-    double R = exp((risk_free_rate - dividend_yield) * dt);
+    double R = exp((risk_free_rate) * dt);
     double up_prob = (R - down_factor) / (up_factor - down_factor);
     double *host_tree = new double[num_steps+1];
     double *dev_tree;
@@ -71,8 +70,7 @@ double binomial_american_put(double stock_price,
     return price;
 }
 int main() {
-    cout << binomial_american_put(20, 25, .5, 1, 20, 0.06, 0) << endl;
-
+    cout << binomial_american_put(20, 25, .5, 1, 20, 0.06) << endl;
 
     return 0;
 }
