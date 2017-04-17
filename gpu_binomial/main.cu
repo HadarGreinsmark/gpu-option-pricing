@@ -181,7 +181,7 @@ double gpu3_binomial_american_put(double stock_price,
     tree_builder_shared<<<1, num_steps>>>(dev_price, stock_price, strike_price, num_steps, R, up_factor, up_prob);
 
     check_err(cudaMemcpy(&price, dev_price, sizeof(double), cudaMemcpyDeviceToHost));
-    cudaFree(dev_tree);
+    cudaFree(dev_price);
 
     return price;
 }
@@ -219,6 +219,10 @@ void benchmark_gpu(double (*to_invoke)()) {
 
 double gpu1() {
 	return gpu1_binomial_american_put(20, 25, .5, 1, 200, 0.06);
+}
+
+double gpu2() {
+	return gpu2_binomial_american_put(20, 25, .5, 1, 200, 0.06);
 }
 
 double gpu3() {
