@@ -218,15 +218,15 @@ void benchmark_gpu(double (*to_invoke)()) {
 }
 
 double gpu1() {
-	return gpu1_binomial_american_put(20, 25, .5, 1, 200, 0.06);
+	return gpu1_binomial_american_put(20, 25, .5, 1, 2000, 0.06);
 }
 
 double gpu2() {
-	return gpu2_binomial_american_put(20, 25, .5, 1, 200, 0.06);
+	return gpu2_binomial_american_put(20, 25, .5, 1, 2000, 0.06);
 }
 
 double gpu3() {
-	return gpu3_binomial_american_put(20, 25, .5, 1, 200, 0.06);
+	return gpu3_binomial_american_put(20, 25, .5, 1, 2000, 0.06);
 }
 
 int main() {
