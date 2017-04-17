@@ -129,15 +129,73 @@ double gpu2_binomial_american_put(double stock_price,
 
 
 
+// Build tree on GPU directly
 
-void benchmark_gpu(int (*to_invoke)()) {
+__global__ void tree_builder_shared(
+		double* dev_price,
+		double stock_price,
+		double strike_price,
+		int num_steps,
+		double R,
+		double up_factor,
+		double up_prob) {
+
+	__shared__ double tree[256];
+
+    // Initialize end of host_tree at expire time
+	int branch = threadIdx.x;
+    if (branch <= num_steps) {
+        // Option value when exercising the option
+        double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - num_steps);
+        tree[branch] = max(exercise, .0);
+    }
+
+    for (int step = num_steps-1; step >= 0; --step) {
+    	int branch = threadIdx.x;
+    	if (branch <= step) {
+            double binomial = 1/R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
+            double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step);
+            tree[branch] = max(binomial, exercise);
+    	}
+    	__syncthreads();
+    }
+}
+
+
+double gpu3_binomial_american_put(double stock_price,
+                             double strike_price,
+                             double expire,
+                             double volat,
+                             int num_steps,
+                             double risk_free_rate) {
+    double dt = expire / num_steps;
+    double up_factor = exp(volat * sqrt(dt));
+    double down_factor = 1 / up_factor;
+    double R = exp((risk_free_rate) * dt);
+    double up_prob = (R - down_factor) / (up_factor - down_factor);
+    double price;
+    double* dev_price;
+
+    check_err(cudaMalloc((void**) &dev_price, 1*sizeof(double)));
+
+    tree_builder_shared<<<1, num_steps>>>(dev_price, stock_price, strike_price, num_steps, R, up_factor, up_prob);
+
+    check_err(cudaMemcpy(&price, dev_price, sizeof(double), cudaMemcpyDeviceToHost));
+    cudaFree(dev_tree);
+
+    return price;
+}
+
+
+
+void benchmark_gpu(double (*to_invoke)()) {
 	cudaEvent_t start, end;
 	check_err(cudaEventCreate(&start));
 	check_err(cudaEventCreate(&end));
 
-	printf("Function returns: %d\n", to_invoke());
+	printf("Function returns: %f\n", to_invoke());
 
-	printf("Warm up");
+	printf("Warm up\n");
     for (int i = 0; i < 100; ++i) {
     	to_invoke();
     }
@@ -159,11 +217,11 @@ void benchmark_gpu(int (*to_invoke)()) {
     printf("Took %d ms\n", int(duration + 0.5));
 }
 
-int gpu1() {
+double gpu1() {
 	return gpu1_binomial_american_put(20, 25, .5, 1, 200, 0.06);
 }
 
-int gpu2() {
+double gpu2() {
 	return gpu2_binomial_american_put(20, 25, .5, 1, 200, 0.06);
 }
 
