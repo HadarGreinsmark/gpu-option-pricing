@@ -130,13 +130,13 @@ __global__ void tree_builder(
 	}
 
 	for (int step = num_steps - 1; step >= 0; --step) {
+		__syncthreads();
 		int branch = blockIdx.x;
 		if (branch <= step) {
 			double binomial = 1 / R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
 			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step);
 			tree[branch] = max(binomial, exercise);
 		}
-		__syncthreads();
 	}
 }
 
@@ -187,13 +187,13 @@ __global__ void tree_builder_shared(
 	}
 
 	for (int step = num_steps - 1; step >= 0; --step) {
+		__syncthreads();
 		int branch = threadIdx.x;
 		if (branch <= step) {
 			double binomial = 1 / R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
 			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step);
 			tree[branch] = max(binomial, exercise);
 		}
-		__syncthreads();
 	}
 }
 
@@ -328,7 +328,7 @@ void gpu_benchmark(const char* name, double (*to_invoke)()) {
 	check_err(cudaEventDestroy(start));
 	check_err(cudaEventDestroy(end));
 
-	printf("Took %d ms\n", int(duration + 0.5));
+	printf("Took %d ms\n\n", int(duration + 0.5));
 }
 
 void cpu_benchmark(const char* name, double (*to_invoke)()) {
@@ -351,7 +351,7 @@ void cpu_benchmark(const char* name, double (*to_invoke)()) {
 
 	end = clock();
 	float duration = (double(end) - double(start)) * 1000 / CLOCKS_PER_SEC;
-	printf("Took %d ms\n", int(duration + 0.5));
+	printf("Took %d ms\n\n", int(duration + 0.5));
 }
 
 double cpu() {
