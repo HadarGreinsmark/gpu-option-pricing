@@ -123,11 +123,9 @@ __global__ void tree_builder(
 
 	// Initialize end of host_tree at expire time
 	int branch = blockIdx.x;
-	if (branch <= num_steps) {
-		// Option value when exercising the option
-		double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - num_steps);
-		tree[branch] = max(exercise, .0);
-	}
+	// Option value when exercising the option
+	double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - num_steps);
+	tree[branch] = max(exercise, .0);
 
 	for (int step = num_steps - 1; step >= 0; --step) {
 		__syncthreads();
@@ -157,7 +155,7 @@ double gpu2_binomial_american_put(
 
 	check_err(cudaMalloc((void** ) &dev_tree, (num_steps + 1) * sizeof(double)));
 
-	tree_builder<<<num_steps, 1>>>(dev_tree, stock_price, strike_price, num_steps, R, up_factor, up_prob);
+	tree_builder<<<num_steps+1, 1>>>(dev_tree, stock_price, strike_price, num_steps, R, up_factor, up_prob);
 
 	check_err(cudaMemcpy(&price, &dev_tree[0], sizeof(double), cudaMemcpyDeviceToHost));
 	cudaFree(dev_tree);
@@ -371,6 +369,7 @@ double gpu3() {
 }
 
 int main() {
+	// TODO: Print CPU and GPU info
 	cpu_benchmark("CPU dynprog", cpu);
 	gpu_benchmark("GPU tree reduction", gpu1);
 	gpu_benchmark("GPU tree build and reduction", gpu2);
