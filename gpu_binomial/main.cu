@@ -3,7 +3,6 @@
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>
-#include <array>
 
 using namespace std;
 
@@ -194,6 +193,8 @@ __global__ void tree_builder_shared(
 			tree[branch] = max(binomial, exercise);
 		}
 	}
+
+    *dev_price = tree[0];
 }
 
 double gpu3_binomial_american_put(
@@ -300,6 +301,126 @@ double gpu4_binomial_american_put(
 }
 */
 
+
+//////// Build tree on GPU with triangles and parallelograms ////////
+
+enum BrickPos {CEIL_EDGE, INNER, FLOOR_EDGE};
+
+
+template<BrickPos Pos>
+__global__ void tree_builder_triangle(
+		double* dev_top_edge,
+		double* dev_bottom_edge,
+		double stock_price,
+		double strike_price,
+		double R,
+		double up_factor,
+		double up_prob) {
+
+	const int NUM_STEPS = 1024;
+	__shared__ double tree[NUM_STEPS];
+
+	// Initialize end of host_tree at expire time
+	int branch = threadIdx.x;
+	if (branch <= NUM_STEPS) {
+		// Option value when exercising the option
+		double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - NUM_STEPS);
+		tree[branch] = max(exercise, .0);
+	}
+
+	for (int step = NUM_STEPS - 1; step >= 0; --step) {
+		__syncthreads();
+		int branch = threadIdx.x;
+		if (branch <= step) {
+			double binomial = 1 / R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
+			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step);
+			tree[branch] = max(binomial, exercise);
+			if (Pos != CEIL_EDGE) {
+				dev_bottom_edge[step] = tree[0];
+			}
+		}
+	}
+
+	if (Pos != FLOOR_EDGE) {
+		dev_top_edge[threadIdx.x] = tree[threadIdx.x];
+	}
+}
+
+template<BrickPos Pos>
+__global__ void tree_builder_brick(
+		double stock_price,
+		double strike_price,
+		int start_step,
+		double R,
+		double up_factor,
+		double up_prob,
+		double* dev_price,
+		double* in_upper_edge,
+		double* in_lower_edge,
+		double* out_upper_edge,
+		double* out_lower_edge) {
+
+	const int NUM_STEPS = 1024;
+	__shared__ double tree[NUM_STEPS];
+
+	int step = start_step -1;
+	for (int brick_step = NUM_STEPS -1; brick_step >= 0; --brick_step) {
+		__syncthreads();
+		int branch = threadIdx.x;
+		if (branch >= brick_step) {
+			double binomial = 1 / R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
+			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step);
+			tree[branch] = max(binomial, exercise);
+		}
+		--step;
+		tree[1024] = tree[2048 -brick_step +2];
+	}
+
+	for (int step = NUM_STEPS - 1; step >= 0; --step) {
+		__syncthreads();
+		int branch = threadIdx.x;
+		if (branch <= step) {
+			double binomial = 1 / R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
+			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step);
+			tree[branch] = max(binomial, exercise);
+			if (Pos != CEIL_EDGE) {
+				dev_bottom_edge[step] = tree[0];
+			}
+		}
+	}
+
+	if (Pos != FLOOR_EDGE) {
+		dev_top_edge[threadIdx.x] = tree[threadIdx.x];
+	}
+}
+
+
+double gpu4_binomial_american_put(
+		double stock_price,
+		double strike_price,
+		double expire,
+		double volat,
+		int num_steps,
+		double risk_free_rate) {
+	double dt = expire / num_steps;
+	double up_factor = exp(volat * sqrt(dt));
+	double down_factor = 1 / up_factor;
+	double R = exp((risk_free_rate) * dt);
+	double up_prob = (R - down_factor) / (up_factor - down_factor);
+	double price;
+	double* dev_price;
+
+	check_err(cudaMalloc((void** ) &dev_price, 1 * sizeof(double)));
+
+	tree_builder_shared<<<1, num_steps+1>>>(dev_price, stock_price, strike_price, num_steps, R, up_factor, up_prob);
+
+	check_err(cudaMemcpy(&price, dev_price, sizeof(double), cudaMemcpyDeviceToHost));
+	cudaFree(dev_price);
+
+	return price;
+}
+
+
 void gpu_benchmark(const char* name, double (*to_invoke)(int), int indep_var) {
 	cudaEvent_t start, end;
 	check_err(cudaEventCreate(&start));
@@ -370,9 +491,9 @@ double gpu3(int indep_var) {
 }
 
 int main() {
-	int num_steps[4] = {100, 200, 500, 1000};
+	int num_steps[5] = {1, 100, 200, 500, 1000};
 	// TODO: Print CPU and GPU info
-	for (int i = 0; i < 4; ++i) {
+	for (int i = 0; i < 5; ++i) {
 		printf("======== %d steps ========\n", num_steps[i]);
 		cpu_benchmark("CPU dynprog", cpu, num_steps[i]);
 		gpu_benchmark("GPU tree reduction", gpu1, num_steps[i]);
