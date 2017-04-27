@@ -453,7 +453,7 @@ void gpu_benchmark(const char* name, double (*to_invoke)(int), int* indep_vars, 
 
 		float duration;
 		check_err(cudaEventElapsedTime(&duration, start, end));
-		duration = duration * pow(10, 6) / reruns;
+		duration = duration / reruns * pow(10, 3);
 		printf(", %6d", int(duration + 0.5)); // Microseconds
 	}
 
@@ -481,7 +481,7 @@ void cpu_benchmark(const char* name, double (*to_invoke)(int), int* indep_vars, 
 		}
 
 		end = clock();
-		float duration = (double(end) - double(start)) * pow(10, 6) / CLOCKS_PER_SEC / reruns;
+		float duration = (double(end) - double(start)) / CLOCKS_PER_SEC / reruns * pow(10, 6);
 
 		printf(", %6d", int(duration + 0.5)); // Microseconds
 	}
@@ -506,10 +506,9 @@ double gpu3(int indep_var) {
 }
 
 int main() {
-	const int reruns = 100;
+	const int reruns = 1000;
 	const size_t num_step_tests = 11;
 	int step_tests[num_step_tests] = { 1, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000 };
-
 
 	printf("\"%-30s\", \"%-8s\"", "Implementation", "100 step");
 	for (int i = 0; i < num_step_tests; ++i) {
