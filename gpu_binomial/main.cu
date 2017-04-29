@@ -429,19 +429,19 @@ double gpu4_binomial_american_put(
 
 #endif
 
-void gpu_benchmark(const char* name, double (*to_invoke)(int), int* indep_vars, size_t num_indep_vars, int reruns) {
+void gpu_benchmark(const char* name, double (*to_invoke)(int), int reruns) {
 	cudaEvent_t start, end;
 	check_err(cudaEventCreate(&start));
 	check_err(cudaEventCreate(&end));
 
-	printf("%-32s, %3.8f", name, to_invoke(100));
+	//printf("%-32s, %3.8f", name, to_invoke(100));
 
 	// Warm up
 	for (int i = 0; i < reruns / 10; ++i) {
 		to_invoke(100);
 	}
 
-	for (int var = 0; var < num_indep_vars; ++var) {
+	for (int var = 0; var <= 1000; var=+10) {
 		// Start test
 		check_err(cudaEventRecord(start, 0));
 		for (int i = 0; i < reruns; ++i) {
@@ -462,22 +462,22 @@ void gpu_benchmark(const char* name, double (*to_invoke)(int), int* indep_vars, 
 	check_err(cudaEventDestroy(end));
 }
 
-void cpu_benchmark(const char* name, double (*to_invoke)(int), int* indep_vars, size_t num_indep_vars, int reruns) {
+void cpu_benchmark(const char* name, double (*to_invoke)(int), int reruns) {
 	clock_t start;
 	clock_t end;
 
-	printf("%-32s, %3.8f", name, to_invoke(100));
+	//printf("%-32s, %3.8f", name, to_invoke(100));
 
 	// Warm up
 	for (int i = 0; i < reruns / 10; ++i) {
 		to_invoke(100);
 	}
 
-	for (int var = 0; var < num_indep_vars; ++var) {
+	for (int var = 0; var <= 1000; var+=10) {
 		// Start test
 		start = clock();
 		for (int i = 0; i < reruns; ++i) {
-			to_invoke(indep_vars[var]);
+			to_invoke(var);
 		}
 
 		end = clock();
@@ -506,20 +506,20 @@ double gpu3(int indep_var) {
 }
 
 int main() {
-	const int reruns = 1000;
-	const size_t num_step_tests = 11;
-	int step_tests[num_step_tests] = { 1, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000 };
+	const int reruns = 100;
+	//const size_t num_step_tests = 11;
+	//int step_tests[num_step_tests] = { 1, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000 };
 
-	printf("\"%-30s\", \"%-8s\"", "Implementation", "100 step");
+/*	printf("\"%-30s\", \"%-8s\"", "Implementation", "100 step");
 	for (int i = 0; i < num_step_tests; ++i) {
 		printf(", %6d", step_tests[i]);
 	}
-	printf("\n");
+	printf("\n");*/
 
-	cpu_benchmark("CPU dynprog", cpu, step_tests, num_step_tests, reruns);
-	gpu_benchmark("GPU tree reduction", gpu1, step_tests, num_step_tests, reruns);
-	gpu_benchmark("GPU tree build and reduction", gpu2, step_tests, num_step_tests, reruns);
-	gpu_benchmark("GPU shared memory", gpu3, step_tests, num_step_tests, reruns);
+	cpu_benchmark("CPU dynprog", cpu, reruns);
+	gpu_benchmark("GPU tree reduction", gpu1, reruns);
+	gpu_benchmark("GPU tree build and reduction", gpu2, reruns);
+	gpu_benchmark("GPU shared memory", gpu3, reruns);
 
 	return 0;
 }
