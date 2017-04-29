@@ -445,7 +445,7 @@ void gpu_benchmark(const char* name, double (*to_invoke)(int), int reruns) {
 		// Start test
 		check_err(cudaEventRecord(start, 0));
 		for (int i = 0; i < reruns; ++i) {
-			to_invoke(100);
+			to_invoke(var);
 		}
 
 		check_err(cudaEventRecord(end, 0));
@@ -506,7 +506,7 @@ double gpu3(int indep_var) {
 }
 
 int main() {
-	const int reruns = 100;
+	const int reruns = 1;
 	//const size_t num_step_tests = 11;
 	//int step_tests[num_step_tests] = { 1, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000 };
 
