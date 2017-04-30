@@ -429,7 +429,7 @@ double gpu4_binomial_american_put(
 
 #endif
 
-void gpu_benchmark(const char* name, double (*to_invoke)(int), int reruns) {
+void gpu_benchmark(const char* name, double (*to_invoke)(int), const int reruns) {
 	cudaEvent_t start, end;
 	check_err(cudaEventCreate(&start));
 	check_err(cudaEventCreate(&end));
@@ -441,8 +441,7 @@ void gpu_benchmark(const char* name, double (*to_invoke)(int), int reruns) {
 		to_invoke(100);
 	}
 
-	for (int var = 0; var <= 1000; var=+10) {
-		// Start test
+	for (int var = 0; var <= 1000; var+= 10) {
 		check_err(cudaEventRecord(start, 0));
 		for (int i = 0; i < reruns; ++i) {
 			to_invoke(var);
@@ -506,7 +505,7 @@ double gpu3(int indep_var) {
 }
 
 int main() {
-	const int reruns = 1;
+	const int reruns = 100;
 	//const size_t num_step_tests = 11;
 	//int step_tests[num_step_tests] = { 1, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000 };
 
