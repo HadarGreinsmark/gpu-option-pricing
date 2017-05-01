@@ -194,6 +194,7 @@ __global__ void tree_builder_shared(
 		}
 	}
 
+	// TODO: Execute this only on one thread
 	*dev_price = tree[0];
 }
 
@@ -301,16 +302,19 @@ double gpu3_binomial_american_put(
  }
  */
 
-#if 0
+#if 1
 
 //////// Build tree on with triangles and parallelograms ////////
 
-enum BrickPos {CEIL_EDGE, INNER, FLOOR_EDGE};
+enum BrickPos {
+	CEIL_EDGE, INNER, FLOOR_EDGE, FINAL
+};
 const int NUM_STEPS = 1024;
 
 /**
  * Aggregate one half brick, starting from the leaf nodes in the complete tree
  *
+ * Needs to be launched with 'NUM_STEPS' threads
  */
 template<BrickPos Pos>
 __global__ void tree_builder_triangle(
@@ -327,27 +331,27 @@ __global__ void tree_builder_triangle(
 
 	// Initialize end of host_tree at expire time
 	int branch = threadIdx.x;
-	if (branch < NUM_STEPS) {
-		// Option value when exercising the option
-		double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - NUM_STEPS + root_pos);
-		tree[branch] = max(exercise, .0);
-	}
+	// Option value when exercising the option
+	double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - NUM_STEPS + root_pos);
+	tree[branch] = max(exercise, .0);
 
 	for (int step = NUM_STEPS - 1; step >= 0; --step) {
 		__syncthreads();
+
 		int branch = threadIdx.x;
 		if (branch <= step) {
 			double binomial = 1 / R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
 			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step + root_pos);
 			tree[branch] = max(binomial, exercise);
+
 			if (Pos != CEIL_EDGE) {
-				out_bottom_edge[step] = tree[0];
+				out_lower_edge[step] = tree[0];
 			}
 		}
 	}
 
 	if (Pos != FLOOR_EDGE) {
-		out_top_edge[threadIdx.x] = tree[threadIdx.x];
+		out_upper_edge[threadIdx.x] = tree[threadIdx.x];
 	}
 }
 
@@ -355,50 +359,58 @@ template<BrickPos Pos>
 __global__ void tree_builder_brick(
 		double stock_price,
 		double strike_price,
-		int start_step,
-		int start_branch,
 		double R,
 		double up_factor,
 		double up_prob,
-		double* dev_price,
+		int root_pos,
 		double* in_upper_edge,
 		double* in_lower_edge,
 		double* out_upper_edge,
 		double* out_lower_edge) {
 
 	// Use shared memory for speedup
-	__shared__ double tree[NUM_STEPS+1];
+	__shared__ double tree[NUM_STEPS + 1];
 	tree[threadIdx.x] = in_lower_edge[threadIdx.x];
-	tree[NUM_STEPS] = in_upper_edge[0];
 
-	int step = start_step -1;
-	for (int brick_step = NUM_STEPS -1; brick_step >= 0; --brick_step) {
-		__syncthreads();
+	// Create first triangle
+	for (int step = NUM_STEPS - 1; step >= 0; --step) {
+
+		// Take one value from the upper edge, each step backward
+		if (threadIdx.x == NUM_STEPS - 1) { // This is the only thread that read tree[NUM_STEPS]
+			tree[NUM_STEPS] = in_upper_edge[NUM_STEPS - step - 1];
+		}
+
+		__syncthreads(); // Fill all leafs, before writing over with the next step's leafs
+
 		int branch = threadIdx.x;
-		if (branch >= brick_step) {
+		if (branch >= step) {
 			double binomial = 1 / R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
-			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step +start_branch);
+			double exercise = strike_price
+					- stock_price * pow(up_factor, 2 * branch - step - (NUM_STEPS - 1) + root_pos);
 			tree[branch] = max(binomial, exercise);
 		}
-		--step;
-		tree[NUM_STEPS] = tree[2048 -brck_step +2];
 	}
 
-	for (int step = NUM_STEPS - 1; step >= 0; --step) {
+	// Create second triangle
+	for (int step = NUM_STEPS - 2; step >= 0; --step) {
 		__syncthreads();
+
 		int branch = threadIdx.x;
 		if (branch <= step) {
 			double binomial = 1 / R * (up_prob * tree[branch + 1] + (1 - up_prob) * tree[branch]);
-			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step);
+			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step + root_pos);
 			tree[branch] = max(binomial, exercise);
+
 			if (Pos != CEIL_EDGE) {
-				dev_bottom_edge[step] = tree[0];
+				out_lower_edge[step] = tree[0];
 			}
 		}
 	}
 
-	if (Pos != FLOOR_EDGE) {
-		dev_top_edge[threadIdx.x] = tree[threadIdx.x];
+	if (Pos == FINAL) {
+		out_upper_edge[0] = tree[0];
+	} else if (Pos != FLOOR_EDGE) {
+		out_upper_edge[threadIdx.x] = tree[threadIdx.x];
 	}
 }
 
@@ -415,15 +427,23 @@ double gpu4_binomial_american_put(
 	double R = exp((risk_free_rate) * dt);
 	double up_prob = (R - down_factor) / (up_factor - down_factor);
 	double price;
-	double* dev_price;
 
+	double* edge1;
+	double* edge2;
+	double* dev_price;
+	check_err(cudaMalloc((void** ) &edge1, NUM_STEPS * sizeof(double)));
+	check_err(cudaMalloc((void** ) &edge2, NUM_STEPS * sizeof(double)));
 	check_err(cudaMalloc((void** ) &dev_price, 1 * sizeof(double)));
 
-	tree_builder_shared<<<1, num_steps+1>>>(dev_price, stock_price, strike_price, num_steps, R, up_factor, up_prob);
+	tree_builder_triangle<CEIL_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, NUM_STEPS,
+			NULL, edge1);
+	tree_builder_triangle<FLOOR_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, -NUM_STEPS,
+			edge2, NULL);
+	tree_builder_brick<FINAL> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, 0, edge1, edge2,
+			dev_price, NULL);
 
-	check_err(cudaMemcpy(&price, dev_price, sizeof(double), cudaMemcpyDeviceToHost));
+	check_err(cudaMemcpy(&price, dev_price, 1*sizeof(double), cudaMemcpyDeviceToHost));
 	cudaFree(dev_price);
-
 	return price;
 }
 
@@ -434,14 +454,14 @@ void gpu_benchmark(const char* name, double (*to_invoke)(int), const int reruns)
 	check_err(cudaEventCreate(&start));
 	check_err(cudaEventCreate(&end));
 
-	//printf("%-32s, %3.8f", name, to_invoke(100));
+//printf("%-32s, %3.8f", name, to_invoke(100));
 
-	// Warm up
+// Warm up
 	for (int i = 0; i < reruns / 10; ++i) {
 		to_invoke(100);
 	}
 
-	for (int var = 0; var <= 1000; var+= 10) {
+	for (int var = 0; var <= 1000; var += 10) {
 		check_err(cudaEventRecord(start, 0));
 		for (int i = 0; i < reruns; ++i) {
 			to_invoke(var);
@@ -465,14 +485,14 @@ void cpu_benchmark(const char* name, double (*to_invoke)(int), int reruns) {
 	clock_t start;
 	clock_t end;
 
-	//printf("%-32s, %3.8f", name, to_invoke(100));
+//printf("%-32s, %3.8f", name, to_invoke(100));
 
-	// Warm up
+// Warm up
 	for (int i = 0; i < reruns / 10; ++i) {
 		to_invoke(100);
 	}
 
-	for (int var = 0; var <= 1000; var+=10) {
+	for (int var = 0; var <= 1000; var += 10) {
 		// Start test
 		start = clock();
 		for (int i = 0; i < reruns; ++i) {
@@ -504,16 +524,24 @@ double gpu3(int indep_var) {
 	return gpu3_binomial_american_put(20, 25, .5, 1, indep_var, 0.06);
 }
 
-int main() {
-	const int reruns = 100;
-	//const size_t num_step_tests = 11;
-	//int step_tests[num_step_tests] = { 1, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000 };
+double gpu4(int indep_var) {
+	return gpu4_binomial_american_put(20, 25, .5, 1, indep_var, 0.06);
+}
 
-/*	printf("\"%-30s\", \"%-8s\"", "Implementation", "100 step");
-	for (int i = 0; i < num_step_tests; ++i) {
-		printf(", %6d", step_tests[i]);
-	}
-	printf("\n");*/
+int main() {
+	printf("cpu: %f\n", cpu(2048-1));
+	printf("gpu: %f\n", gpu4(0));
+
+	return;
+	const int reruns = 100;
+//const size_t num_step_tests = 11;
+//int step_tests[num_step_tests] = { 1, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000 };
+
+	/*	printf("\"%-30s\", \"%-8s\"", "Implementation", "100 step");
+	 for (int i = 0; i < num_step_tests; ++i) {
+	 printf(", %6d", step_tests[i]);
+	 }
+	 printf("\n");*/
 
 	cpu_benchmark("CPU dynprog", cpu, reruns);
 	gpu_benchmark("GPU tree reduction", gpu1, reruns);
