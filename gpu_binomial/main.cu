@@ -194,7 +194,6 @@ __global__ void tree_builder_shared(
 		}
 	}
 
-	// TODO: Execute this only on one thread
 	*dev_price = tree[0];
 }
 
@@ -376,7 +375,7 @@ __global__ void tree_builder_brick(
 	for (int step = NUM_STEPS - 1; step >= 0; --step) {
 
 		// Take one value from the upper edge, each step backward
-		if (threadIdx.x == NUM_STEPS - 1) { // This is the only thread that read tree[NUM_STEPS]
+		if (threadIdx.x == NUM_STEPS - 1) { // This is the only thread that read tree[NUM_STEPS], so only wait for that thread
 			tree[NUM_STEPS] = in_upper_edge[NUM_STEPS - step - 1];
 		}
 
@@ -408,7 +407,7 @@ __global__ void tree_builder_brick(
 	}
 
 	if (Pos == FINAL) {
-		out_upper_edge[0] = tree[0];
+		*out_upper_edge = tree[0];
 	} else if (Pos != FLOOR_EDGE) {
 		out_upper_edge[threadIdx.x] = tree[threadIdx.x];
 	}
