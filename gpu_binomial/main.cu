@@ -445,9 +445,10 @@ double gpu4_binomial_american_put(
 
 	check_err(cudaMemcpyAsync(&price, dev_price, sizeof(double), cudaMemcpyDeviceToHost));
 	check_err(cudaStreamSynchronize(0));
+
 	cudaFree(edge1);
 	cudaFree(edge2);
-	cudaFree(dev_price);
+	cudFree(dev_price);
 
 	return price;
 }
