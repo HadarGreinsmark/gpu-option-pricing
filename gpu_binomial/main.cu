@@ -10,7 +10,7 @@ using namespace std;
 
 inline void cu_err_handler(cudaError_t err, const char* file, int line) {
 	if (err != cudaSuccess) {
-		fprintf(stderr, "GPU error: '%s' at %s:%d", cudaGetErrorString(err), file, line);
+		fprintf(stderr, "GPU error: '%s' at %s:%d\n", cudaGetErrorString(err), file, line);
 		exit(1);
 	}
 }
@@ -406,11 +406,13 @@ __global__ void tree_builder_brick(
 		}
 	}
 
+	*out_upper_edge = tree[0];
+/*
 	if (Pos == FINAL) {
 		*out_upper_edge = tree[0];
 	} else if (Pos != FLOOR_EDGE) {
 		out_upper_edge[threadIdx.x] = tree[threadIdx.x];
-	}
+	}*/
 }
 
 double gpu4_binomial_american_put(
@@ -441,8 +443,12 @@ double gpu4_binomial_american_put(
 	tree_builder_brick<FINAL> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, 0, edge1, edge2,
 			dev_price, NULL);
 
-	check_err(cudaMemcpy(&price, dev_price, 1*sizeof(double), cudaMemcpyDeviceToHost));
+	check_err(cudaMemcpyAsync(&price, dev_price, sizeof(double), cudaMemcpyDeviceToHost));
+	check_err(cudaStreamSynchronize(0));
+	cudaFree(edge1);
+	cudaFree(edge2);
 	cudaFree(dev_price);
+
 	return price;
 }
 
