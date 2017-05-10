@@ -323,8 +323,8 @@ __global__ void tree_builder_triangle(
 		double up_factor,
 		double up_prob,
 		int root_pos,
-		double* out_upper_edge,
-		double* out_lower_edge) {
+		double* out_climbing_edge,
+		double* out_sinking_edge) {
 
 	__shared__ double tree[NUM_STEPS];
 
@@ -332,9 +332,9 @@ __global__ void tree_builder_triangle(
 	int branch = threadIdx.x;
 	// Option value when exercising the option
 	double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - NUM_STEPS + root_pos);
-	tree[branch] = max(exercise, .0);
+tree[branch] = max(exercise, .0);
 
-	for (int step = NUM_STEPS - 1; step >= 0; --step) {
+	for (int step = NUM_STEPS - 2; step >= 0; --step) {
 		__syncthreads();
 
 		int branch = threadIdx.x;
@@ -343,14 +343,14 @@ __global__ void tree_builder_triangle(
 			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step + root_pos);
 			tree[branch] = max(binomial, exercise);
 
-			if (Pos != CEIL_EDGE) {
-				out_lower_edge[step] = tree[0];
+			if (Pos != FLOOR_EDGE) {
+				out_sinking_edge[step] = tree[0];
 			}
 		}
 	}
 
-	if (Pos != FLOOR_EDGE) {
-		out_upper_edge[threadIdx.x] = tree[threadIdx.x];
+	if (Pos != CEIL_EDGE) {
+		out_climbing_edge[threadIdx.x] = tree[threadIdx.x];
 	}
 }
 
@@ -364,8 +364,8 @@ __global__ void tree_builder_brick(
 		int root_pos,
 		double* in_upper_edge,
 		double* in_lower_edge,
-		double* out_upper_edge,
-		double* out_lower_edge) {
+		double* out_climbing_edge,
+		double* out_sinking_edge) {
 
 	// Use shared memory for speedup
 	__shared__ double tree[NUM_STEPS + 1];
@@ -400,19 +400,17 @@ __global__ void tree_builder_brick(
 			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step + root_pos);
 			tree[branch] = max(binomial, exercise);
 
-			if (Pos != CEIL_EDGE) {
-				out_lower_edge[step] = tree[0];
+			if (Pos != FLOOR_EDGE && Pos != FINAL) {
+				out_sinking_edge[step] = tree[0];
 			}
 		}
 	}
 
-	*out_upper_edge = tree[0];
-/*
 	if (Pos == FINAL) {
-		*out_upper_edge = tree[0];
-	} else if (Pos != FLOOR_EDGE) {
-		out_upper_edge[threadIdx.x] = tree[threadIdx.x];
-	}*/
+		*out_climbing_edge = tree[0];
+	} else if (Pos != CEIL_EDGE) {
+		out_climbing_edge[threadIdx.x] = tree[threadIdx.x];
+	}
 }
 
 double gpu4_binomial_american_put(
@@ -437,18 +435,19 @@ double gpu4_binomial_american_put(
 	check_err(cudaMalloc((void** ) &dev_price, 1 * sizeof(double)));
 
 	tree_builder_triangle<CEIL_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, NUM_STEPS,
-			NULL, edge1);
+	NULL, edge1);
 	tree_builder_triangle<FLOOR_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, -NUM_STEPS,
 			edge2, NULL);
+	check_err(cudaStreamSynchronize(0));
 	tree_builder_brick<FINAL> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, 0, edge1, edge2,
 			dev_price, NULL);
 
-	check_err(cudaMemcpyAsync(&price, dev_price, sizeof(double), cudaMemcpyDeviceToHost));
+	check_err(cudaMemcpyAsync(&price, dev_price, 1 * sizeof(double), cudaMemcpyDefault));
 	check_err(cudaStreamSynchronize(0));
 
 	cudaFree(edge1);
 	cudaFree(edge2);
-	cudFree(dev_price);
+	cudaFree(dev_price);
 
 	return price;
 }
@@ -535,7 +534,8 @@ double gpu4(int indep_var) {
 }
 
 int main() {
-	printf("cpu: %f\n", cpu(2048-1));
+	printf("Compiled: %s %s\n", __DATE__, __TIME__);
+	printf("cpu: %f\n", cpu(2048 - 1));
 	printf("gpu: %f\n", gpu4(0));
 
 	return;
@@ -553,6 +553,7 @@ int main() {
 	gpu_benchmark("GPU tree reduction", gpu1, reruns);
 	gpu_benchmark("GPU tree build and reduction", gpu2, reruns);
 	gpu_benchmark("GPU shared memory", gpu3, reruns);
+
 
 	return 0;
 }
