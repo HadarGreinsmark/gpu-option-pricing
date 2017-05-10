@@ -332,7 +332,9 @@ __global__ void tree_builder_triangle(
 	int branch = threadIdx.x;
 	// Option value when exercising the option
 	double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - NUM_STEPS + root_pos);
-tree[branch] = max(exercise, .0);
+	// DEBUG printf("e: %d <> %f <> %f ^ %d = %f\n", branch, exercise, up_factor, 2 * branch - NUM_STEPS + root_pos, pow(up_factor, 2 * branch - NUM_STEPS + root_pos));
+	tree[branch] = max(exercise, .0);
+
 
 	for (int step = NUM_STEPS - 2; step >= 0; --step) {
 		__syncthreads();
@@ -348,6 +350,7 @@ tree[branch] = max(exercise, .0);
 			}
 		}
 	}
+
 
 	if (Pos != CEIL_EDGE) {
 		out_climbing_edge[threadIdx.x] = tree[threadIdx.x];
@@ -427,26 +430,41 @@ double gpu4_binomial_american_put(
 	double up_prob = (R - down_factor) / (up_factor - down_factor);
 	double price;
 
-	double* edge1;
-	double* edge2;
+/*	double* host_edge1 = new double[1024];
+	double* host_edge2 = new double[1024];*/
+	double* dev_edge1;
+	double* dev_edge2;
 	double* dev_price;
-	check_err(cudaMalloc((void** ) &edge1, NUM_STEPS * sizeof(double)));
-	check_err(cudaMalloc((void** ) &edge2, NUM_STEPS * sizeof(double)));
+	check_err(cudaMalloc((void** ) &dev_edge1, NUM_STEPS * sizeof(double)));
+	check_err(cudaMalloc((void** ) &dev_edge2, NUM_STEPS * sizeof(double)));
 	check_err(cudaMalloc((void** ) &dev_price, 1 * sizeof(double)));
 
-	tree_builder_triangle<CEIL_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, NUM_STEPS,
-	NULL, edge1);
+	tree_builder_triangle<CEIL_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, NUM_STEPS+1,
+	NULL, dev_edge1);
 	tree_builder_triangle<FLOOR_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, -NUM_STEPS,
-			edge2, NULL);
+			dev_edge2, NULL);
 	check_err(cudaStreamSynchronize(0));
-	tree_builder_brick<FINAL> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, 0, edge1, edge2,
+	tree_builder_brick<FINAL> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, 0, dev_edge1, dev_edge2,
 			dev_price, NULL);
 
 	check_err(cudaMemcpyAsync(&price, dev_price, 1 * sizeof(double), cudaMemcpyDefault));
+
+/*
+	check_err(cudaMemcpyAsync(host_edge1, dev_edge1, 1024 * sizeof(double), cudaMemcpyDefault));
+	check_err(cudaMemcpyAsync(host_edge2, dev_edge2, 1024 * sizeof(double), cudaMemcpyDefault));
+	check_err(cudaStreamSynchronize(0));
+	for (int i = 0; i < 1024; ++i) {
+			printf("%f, ", host_edge1[i]);
+	}
+	printf("\n--------\n");
+	for (int i = 0; i < 1024; ++i) {
+			printf("%f, ", host_edge2[i]);
+	}
+
 	check_err(cudaStreamSynchronize(0));
 
-	cudaFree(edge1);
-	cudaFree(edge2);
+	cudaFree(dev_edge1);
+	cudaFree(dev_edge2);*/
 	cudaFree(dev_price);
 
 	return price;
@@ -536,7 +554,7 @@ double gpu4(int indep_var) {
 int main() {
 	printf("Compiled: %s %s\n", __DATE__, __TIME__);
 	printf("cpu: %f\n", cpu(2048 - 1));
-	printf("gpu: %f\n", gpu4(0));
+	printf("gpu: %f\n", gpu4(2048 -1));
 
 	return;
 	const int reruns = 100;
