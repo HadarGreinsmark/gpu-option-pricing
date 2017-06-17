@@ -34,10 +34,11 @@ double cpu_dynprog_binomial_american_put(
 	double *tree = new double[num_steps + 1];
 
 	// Initialize end of tree at expire time
-	for (int step = 0; step <= num_steps; ++step) {
+	for (int branch = 0; branch <= num_steps; ++branch) {
 		// Option value when exercising the option
-		double exercise = strike_price - stock_price * pow(up_factor, 2 * step - num_steps);
-		tree[step] = max(exercise, .0);
+		double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - num_steps);
+		tree[branch] = max(exercise, .0);
+		//printf("triangle(x, %d) = max(0 %f)\n", branch, exercise);
 	}
 
 	for (int step = num_steps - 1; step >= 0; --step) {
@@ -308,7 +309,7 @@ double gpu3_binomial_american_put(
 enum BrickPos {
 	CEIL_EDGE, INNER, FLOOR_EDGE, FINAL
 };
-const int NUM_STEPS = 1024;
+const int NUM_STEPS = 2;
 
 /**
  * Aggregate one half brick, starting from the leaf nodes in the complete tree
@@ -335,6 +336,7 @@ __global__ void tree_builder_triangle(
 	// DEBUG printf("e: %d <> %f <> %f ^ %d = %f\n", branch, exercise, up_factor, 2 * branch - NUM_STEPS + root_pos, pow(up_factor, 2 * branch - NUM_STEPS + root_pos));
 	tree[branch] = max(exercise, .0);
 
+	//printf("triangle(x, %d) = max(%f, 0)\n", branch, exercise);
 
 	for (int step = NUM_STEPS - 2; step >= 0; --step) {
 		__syncthreads();
@@ -345,12 +347,13 @@ __global__ void tree_builder_triangle(
 			double exercise = strike_price - stock_price * pow(up_factor, 2 * branch - step + root_pos);
 			tree[branch] = max(binomial, exercise);
 
+			//printf("triangle(%d, %d) = max(%f, %f)\n", step, branch, binomial, exercise);
+
 			if (Pos != FLOOR_EDGE) {
 				out_sinking_edge[step] = tree[0];
 			}
 		}
 	}
-
 
 	if (Pos != CEIL_EDGE) {
 		out_climbing_edge[threadIdx.x] = tree[threadIdx.x];
@@ -390,6 +393,8 @@ __global__ void tree_builder_brick(
 			double exercise = strike_price
 					- stock_price * pow(up_factor, 2 * branch - step - (NUM_STEPS - 1) + root_pos);
 			tree[branch] = max(binomial, exercise);
+
+			//printf("brick(%d, %d) = max(%f, %f)\n", step, branch, binomial, exercise);
 		}
 	}
 
@@ -441,7 +446,7 @@ double gpu4_binomial_american_put(
 
 	tree_builder_triangle<CEIL_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, NUM_STEPS+1,
 	NULL, dev_edge1);
-	tree_builder_triangle<FLOOR_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, -NUM_STEPS,
+	tree_builder_triangle<FLOOR_EDGE> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, -NUM_STEPS+1,
 			dev_edge2, NULL);
 	check_err(cudaStreamSynchronize(0));
 	tree_builder_brick<FINAL> <<<1, NUM_STEPS>>>(stock_price, strike_price, R, up_factor, up_prob, 0, dev_edge1, dev_edge2,
@@ -553,8 +558,8 @@ double gpu4(int indep_var) {
 
 int main() {
 	printf("Compiled: %s %s\n", __DATE__, __TIME__);
-	printf("cpu: %f\n", cpu(2048 - 1));
-	printf("gpu: %f\n", gpu4(2048 -1));
+	printf("cpu: %f\n", cpu(2048-1));
+	printf("gpu: %f\n", gpu4(2048-1));
 
 	return;
 	const int reruns = 100;
